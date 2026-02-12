@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  netflix-ai-agent:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+      - OPEN_ROUTER=${OPEN_ROUTER}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped

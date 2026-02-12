@@ -1,0 +1,7 @@
+python-dotenv==1.0.0
+snowflake-connector-python>=3.0.0
+streamlit==1.32.0
+langchain-openai==0.0.8
+langchain-core==0.1.0
+langgraph==1.0.8
+openai>=1.0.0
