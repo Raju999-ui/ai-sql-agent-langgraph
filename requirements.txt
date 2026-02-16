@@ -6,4 +6,4 @@ langchain-core==0.1.0
 langgraph==1.0.8
 openai>=1.0.0
 fastapi
-uvicorns
+uvicorn
