@@ -1,9 +1,14 @@
 python-dotenv==1.0.0
 snowflake-connector-python>=3.0.0
 streamlit==1.32.0
-langchain-openai==0.0.8
-langchain-core==0.1.0
-langgraph==1.0.8
+
+langchain==0.2.14
+langchain-core==0.2.33
+langchain-openai==0.1.22
+
+langgraph==0.2.14
+
 openai>=1.0.0
+
 fastapi
 uvicorn
