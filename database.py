@@ -1,6 +1,7 @@
 """Database layer for Snowflake interactions."""
 
 import logging
+import sqlite3
 from typing import List, Tuple, Any
 from safe_sql_executor import SafeSQLExecutor
 from config import SnowflakeConfig
@@ -75,6 +76,12 @@ class MockCursor:
         """Fetch all results."""
         return self.results
     
+    def fetchmany(self, size=None):
+        """Fetch many results."""
+        if size is None:
+            return self.fetchall()
+        return self.results[:size]
+    
     def close(self):
         """Close the cursor."""
         pass
@@ -106,12 +113,8 @@ class SnowflakeDB:
             )
             logger.info("Successfully connected to Snowflake")
         except Exception as e:
-            if not SNOWFLAKE_AVAILABLE:
-                logger.warning(f"Snowflake unavailable, falling back to mock: {str(e)}")
-                self.connection = MockSnowflakeConnection()
-            else:
-                logger.error(f"Failed to connect to Snowflake: {str(e)}")
-                raise
+            logger.warning(f"Failed to connect to Snowflake, falling back to mock mode: {str(e)}")
+            self.connection = MockSnowflakeConnection()
 
     def disconnect(self) -> None:
         """Close connection to Snowflake."""
@@ -173,6 +176,101 @@ class SnowflakeDB:
             return schema_info
         except Exception as e:
             logger.error(f"Failed to get schema: {str(e)}")
+            raise
+
+    def __enter__(self):
+        """Context manager entry."""
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.disconnect()
+
+
+class SQLiteDB:
+    """SQLite database interface for local CSV querying."""
+
+    def __init__(self, db_path: str = "local_data.db"):
+        """Initialize database connection.
+        
+        Args:
+            db_path: Path to SQLite database file
+        """
+        self.db_path = db_path
+        self.connection = None
+
+    def connect(self) -> None:
+        """Establish connection to SQLite."""
+        try:
+            logger.info(f"Connecting to SQLite database: {self.db_path}")
+            self.connection = sqlite3.connect(self.db_path)
+            logger.info("Successfully connected to SQLite")
+        except Exception as e:
+            logger.error(f"Failed to connect to SQLite: {str(e)}")
+            raise
+
+    def disconnect(self) -> None:
+        """Close connection to SQLite."""
+        if self.connection:
+            self.connection.close()
+            logger.info("Disconnected from SQLite")
+
+    def execute_query(self, query: str) -> List[Tuple[Any, ...]]:
+        """Execute a SQL query.
+        
+        Args:
+            query: SQL query to execute
+            
+        Returns:
+            List of result rows
+            
+        Raises:
+            Exception: If query execution fails
+        """
+        if not self.connection:
+            raise RuntimeError("Not connected to SQLite. Call connect() first.")
+        
+        try:
+            logger.debug(f"Executing query: {query}")
+            safe_executor = SafeSQLExecutor(self.connection)
+            results = safe_executor.execute(query)
+            logger.info(f"Query executed successfully, returned {len(results)} rows")
+            return results
+        except Exception as e:
+            logger.error(f"Query execution failed: {str(e)}\nQuery: {query}")
+            raise
+
+    def get_schema(self) -> str:
+        """Get all table and column information.
+        
+        Returns:
+            Schema information as string
+        """
+        try:
+            # Query tables and views
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view');")
+            tables = cursor.fetchall()
+            
+            schema_parts = []
+            for table_row in tables:
+                table_name = table_row[0]
+                schema_parts.append(f"Table: {table_name}")
+                
+                # Query columns
+                cursor.execute(f"PRAGMA table_info({table_name});")
+                columns = cursor.fetchall()
+                for col in columns:
+                    col_name = col[1]
+                    col_type = col[2]
+                    schema_parts.append(f"  - {col_name} ({col_type})")
+                schema_parts.append("")
+                
+            cursor.close()
+            return "\n".join(schema_parts)
+        except Exception as e:
+            logger.error(f"Failed to get SQLite schema: {str(e)}")
             raise
 
     def __enter__(self):

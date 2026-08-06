@@ -1,4 +1,4 @@
-"""SQL generation engine using LLM with conversation memory and self-correction."""
+"""SQL generation engine using LLM with conversation memory, self-correction, and RAG."""
 
 import logging
 from typing import Optional, List, Dict
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class SQLGenerator:
-    """Generate SQL queries using LLM."""
+    """Generate SQL queries using LLM with RAG context."""
 
     def __init__(self, config: LLMConfig):
         """Initialize SQL generator.
@@ -26,8 +26,45 @@ class SQLGenerator:
             max_tokens=config.max_tokens,
         )
         
+        self.system_prompt = """
+You are an advanced Snowflake SQL generation agent with:
+- Conversation memory for multi-turn queries
+- Self-correction ability for handling errors
+- RAG-based schema awareness for dynamic schema retrieval
+
+Your responsibilities:
+1. Use conversation history to maintain context across queries
+2. Intelligently handle context-dependent phrases:
+   - "only from 2010" → apply year filter
+   - "same country" → reuse previous country filter
+   - "those movies" → reference previous result set
+   - "count them" → use COUNT(*)
+   - "top 5" → use ORDER BY + LIMIT 5
+3. Preserve previous filters unless user explicitly changes topic
+4. Self-correct: analyze errors and regenerate corrected SQL
+5. Use the retrieved schema below to understand table and column names exactly
+6. Always validate column names match the schema
+
+STRICT RULES:
+- Generate ONLY raw SQL (nothing else)
+- Do NOT use markdown, backticks, or code blocks
+- Do NOT include explanations or comments
+- Do NOT use SELECT * (specify columns explicitly)
+- Do NOT generate INSERT, UPDATE, DELETE, DROP, ALTER, or TRUNCATE
+- Output ONLY the final SQL query
+- No trailing semicolons
+- Ensure proper comma placement in SELECT and WHERE clauses
+
+SQL GENERATION EXAMPLES:
+- SELECT title, director FROM table WHERE country LIKE '%USA%'
+- SELECT title, release_year FROM table WHERE type = 'Movie' AND release_year >= 2020
+- SELECT COUNT(*) FROM table WHERE category LIKE '%Action%'
+- SELECT title, rating FROM table ORDER BY release_year DESC LIMIT 5
+"""
+        
         self.schema_description = """
-You are an advanced Snowflake SQL generation agent with conversation memory and self-correction ability.
+HARDCODED SCHEMA (fallback if RAG unavailable):
+Table: NETFLIX_MOVIES
 
 Table: NETFLIX_MOVIES
 
@@ -87,12 +124,20 @@ SELECT title, rating FROM NETFLIX_MOVIES WHERE director LIKE '%Nolan%' ORDER BY 
         # Conversation history to maintain context
         self.conversation_history: List[Dict[str, str]] = []
 
-    def generate(self, question: str, previous_error: Optional[str] = None) -> str:
-        """Generate SQL query from natural language question with conversation memory.
+    def generate(
+        self,
+        question: str,
+        previous_error: Optional[str] = None,
+        schema_context: Optional[str] = None,
+        db_type: str = "snowflake"
+    ) -> str:
+        """Generate SQL query from natural language question with conversation memory and RAG.
         
         Args:
             question: Natural language question about the data
             previous_error: Error from previous query execution (for self-correction)
+            schema_context: Retrieved schema context from RAG system
+            db_type: The database type ("snowflake" or "sqlite")
             
         Returns:
             Generated SQL query
@@ -134,6 +179,10 @@ What specific Netflix content are you looking for?""")
             # Build context from conversation history
             context_str = self._build_context_string()
             
+            # Use RAG-retrieved schema or fall back to hardcoded
+            if not schema_context:
+                schema_context = self.schema_description
+            
             # Handle self-correction if there was a previous error
             error_context = ""
             if previous_error:
@@ -145,7 +194,21 @@ What specific Netflix content are you looking for?""")
             if is_context_dependent and self.conversation_history:
                 modification_hint = "\n\nHint: This appears to be a context-dependent request. Consider intelligently modifying the previous SQL if applicable."
             
-            prompt = f"""{self.schema_description}
+            # Adapt system prompt dynamically to the database dialect
+            system_prompt = self.system_prompt
+            if db_type == "sqlite":
+                system_prompt = system_prompt.replace(
+                    "Snowflake SQL generation agent", 
+                    "SQLite SQL generation agent"
+                ).replace(
+                    "Snowflake",
+                    "SQLite"
+                ) + "\nEnsure you generate standard SQLite compatible SQL query. Do not use Snowflake-specific syntax or functions."
+
+            prompt = f"""{system_prompt}
+
+RETRIEVED SCHEMA (from RAG):
+{schema_context}
 
 {context_str}
 

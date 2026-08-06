@@ -1,4 +1,4 @@
-"""Streamlit UI for the AI SQL Agent with conversation memory."""
+"""Streamlit UI for the RAG-powered AI SQL Agent with conversation memory."""
 
 import streamlit as st
 import logging
@@ -7,13 +7,15 @@ from datetime import datetime
 from config import AppConfig
 from logger_config import setup_logging
 from langgraph_agent import run_agent
+from schema_ingestion import SchemaIngestion, ingest_schema_from_env
+from schema_retriever import SchemaRetriever, create_retriever_from_env
 
 # Setup logging
 logger = setup_logging("INFO", False)
 
 # Page configuration
 st.set_page_config(
-    page_title="Netflix AI SQL Agent",
+    page_title="Netflix AI SQL Agent (RAG-Powered)",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -26,12 +28,115 @@ if "chat_history" not in st.session_state:
     st.session_state.conversation_context = ""
     st.session_state.last_query = None
     st.session_state.last_results = None
+    st.session_state.schema_context = ""
+    st.session_state.rag_enabled = True
+    st.session_state.db_source = "snowflake"
 
 # Sidebar
 with st.sidebar:
-    st.header("🎬 Netflix AI SQL Agent")
+    st.header("🎬 Netflix AI SQL Agent (RAG)")
     st.markdown("---")
     
+    # Database Settings
+    st.subheader("⚙️ Database Settings")
+    st.session_state.db_source = st.selectbox(
+        "Active Database Source",
+        options=["snowflake", "sqlite"],
+        format_func=lambda x: "Snowflake Cloud" if x == "snowflake" else "Local SQLite (CSV Uploads)",
+        index=0 if st.session_state.db_source == "snowflake" else 1
+    )
+    
+    st.markdown("---")
+    
+    # CSV Upload Section
+    st.subheader("📂 CSV Upload & Ingestion")
+    uploaded_file = st.file_uploader("Upload CSV file to SQLite", type=["csv"])
+    if uploaded_file is not None:
+        try:
+            import re
+            import pandas as pd
+            raw_name = uploaded_file.name.rsplit(".", 1)[0]
+            table_name = re.sub(r'[^a-zA-Z0-9_]', '_', raw_name).lower()
+            
+            df = pd.read_csv(uploaded_file)
+            
+            import sqlite3
+            conn = sqlite3.connect("local_data.db")
+            df.to_sql(table_name, conn, if_exists="replace", index=False)
+            conn.close()
+            
+            st.success(f"✓ Saved to SQLite table: `{table_name}` ({len(df)} rows)")
+            
+            # Switch source and refresh if necessary
+            if st.session_state.db_source != "sqlite":
+                st.session_state.db_source = "sqlite"
+                st.rerun()
+                
+            # Trigger schema ingestion automatically
+            with st.spinner("🔄 Ingesting SQLite schema for RAG..."):
+                try:
+                    ingestion = ingest_schema_from_env()
+                    ingestion.ingest_schema(db_type="sqlite")
+                    st.toast("✓ RAG schema updated for SQLite!")
+                except Exception as e:
+                    st.warning(f"RAG embedding failed (embeddings require OPENAI_API_KEY): {e}. Falling back to direct database schema querying.")
+            
+        except Exception as e:
+            st.error(f"❌ Failed to process CSV: {e}")
+            
+    st.markdown("---")
+    
+    # RAG Management Section
+    st.subheader("🔄 RAG Schema Management")
+    
+    # Check schema status
+    try:
+        retriever = create_retriever_from_env()
+        tables = retriever.get_all_tables()
+        if tables:
+            rag_status = f"✓ RAG Ready ({len(tables)} tables)"
+            st.success(rag_status)
+        else:
+            st.warning("⚠️ RAG initialized but collection is empty.")
+    except Exception as e:
+        st.warning(f"⚠️ RAG not initialized. Ingest schema or upload CSV first.")
+    
+    # Schema ingestion option
+    if st.button("🌱 Initialize/Update Schema", use_container_width=True):
+        try:
+            with st.spinner(f"📥 Ingesting schema from {st.session_state.db_source}..."):
+                ingestion = ingest_schema_from_env()
+                ingestion.ingest_schema(db_type=st.session_state.db_source)
+                stats = ingestion.get_collection_stats()
+                st.success(f"✓ Schema ingested!\n\nDocuments: {stats['total_documents']}\nStorage: {stats['storage_path']}")
+        except Exception as e:
+            st.error(f"❌ Schema ingestion failed: {e}")
+    
+    # Test RAG retriever
+    if st.button("🧪 Test RAG Retriever", use_container_width=True):
+        try:
+            retriever = create_retriever_from_env()
+            test_query = "Show all movies from 2020"
+            schema_context, results = retriever.retrieve_relevant_schema(test_query)
+            
+            st.info(f"""
+**RAG Test Results:**
+- Query: {test_query}
+- Retrieved Documents: {len(results)}
+- Schema Context Length: {len(schema_context)} chars
+            """)
+            
+            if results:
+                st.caption("Sample Retrieved Documents:")
+                for i, doc in enumerate(results[:3], 1):
+                    st.caption(f"{i}. {doc['metadata'].get('type', 'unknown')} - Distance: {doc['distance']:.4f}")
+                    
+        except Exception as e:
+            st.error(f"❌ RAG test failed: {e}")
+    
+    st.markdown("---")
+    
+    # Conversation Management
     st.subheader("📝 Conversation Memory")
     col1, col2 = st.columns(2)
     with col1:
@@ -69,10 +174,11 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Instructions")
     st.markdown("""
-    1. Ask a natural language question about Netflix shows/movies
-    2. The agent remembers previous context
-    3. You can reference earlier queries
-    4. View the results in a formatted table
+    1. Initialize schema using 'Initialize/Update Schema' button
+    2. Ask natural language questions
+    3. The RAG system retrieves relevant schema
+    4. The LLM generates SQL with schema context
+    5. View results in a formatted table
     """)
     
     st.markdown("---")
@@ -91,10 +197,21 @@ with st.sidebar:
     st.subheader("Settings")
     debug_mode = st.checkbox("Debug Mode", value=False)
     show_context = st.checkbox("Show Context Memory", value=False)
+    show_rag_context = st.checkbox("Show RAG Schema Context", value=False)
 
 # Main content
-st.title("🎬 Netflix AI SQL Agent")
-st.markdown("Ask natural language questions about Netflix movies and TV shows")
+st.title("🎬 Netflix AI SQL Agent (RAG-Powered)")
+st.markdown("""
+**Enhanced with Retrieval-Augmented Generation (RAG)**
+- Dynamic schema retrieval using ChromaDB
+- Semantic schema search based on queries
+- Context-aware SQL generation
+""")
+
+# Display RAG context if enabled
+if show_rag_context and st.session_state.schema_context:
+    with st.expander("📍 RAG Schema Context", expanded=False):
+        st.info(f"Retrieved Schema:\n\n{st.session_state.schema_context}")
 
 # Display conversation context if enabled and exists
 if show_context and st.session_state.conversation_context:
@@ -116,7 +233,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 # Input area
-user_input = st.chat_input("Ask your question...", key="user_input")
+user_input = st.chat_input("Ask your question about Netflix...", key="user_input")
 
 if user_input:
     # Add user message to history
@@ -131,13 +248,17 @@ if user_input:
         st.markdown(user_input)
     
     # Process the query
-    with st.spinner("🔄 Processing your question..."):
+    with st.spinner("🔄 Processing your question... (Retrieving schema → Generating SQL → Executing)"):
         try:
-            # Use LangGraph agent (stateless)
-            agent_result = run_agent(user_input)
+            # Use RAG-powered LangGraph agent
+            agent_result = run_agent(user_input, db_type=st.session_state.db_source)
             sql_query = agent_result.get("sql")
             results = agent_result.get("result")
             error = agent_result.get("error")
+            schema_context = agent_result.get("schema_context", "")
+
+            # Store schema context for display
+            st.session_state.schema_context = schema_context
 
             if error:
                 response_text = f"❌ Error: {error}"

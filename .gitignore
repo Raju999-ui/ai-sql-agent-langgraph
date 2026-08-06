@@ -3,3 +3,5 @@
 __pycache__/
 *.pyc
 logs/
+chroma_db/
+chroma_db_*/
