@@ -1,5 +1,13 @@
 """Streamlit UI for the RAG-powered AI SQL Agent with conversation memory."""
 
+# Fix SQLite version requirement for ChromaDB on Linux / Streamlit Cloud
+try:
+    import pysqlite3
+    import sys
+    sys.modules['sqlite3'] = pysqlite3
+except ImportError:
+    pass
+
 import streamlit as st
 import logging
 import json

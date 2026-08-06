@@ -1,13 +1,21 @@
 """Schema ingestion module to fetch Snowflake schema and create embeddings in ChromaDB."""
 
+try:
+    import pysqlite3
+    import sys
+    sys.modules['sqlite3'] = pysqlite3
+except ImportError:
+    pass
+
 import logging
+import os
 from typing import List, Dict, Any, Optional
 import json
 from datetime import datetime
 import chromadb
 from chromadb.config import Settings
 from langchain_openai import OpenAIEmbeddings
-from config import SnowflakeConfig
+from config import SnowflakeConfig, get_env_var
 from database import SnowflakeDB
 
 logger = logging.getLogger(__name__)
@@ -24,27 +32,29 @@ class SchemaIngestion:
         chroma_db_path: str = "./chroma_db",
         collection_name: str = "snowflake_schema"
     ):
-        """Initialize schema ingestion.
-        
-        Args:
-            snowflake_config: Snowflake configuration
-            embedding_model: OpenAI embedding model
-            api_key: OpenAI API key (optional, uses env var if not provided)
-            chroma_db_path: Path to store ChromaDB
-            collection_name: Name of ChromaDB collection
-        """
+        """Initialize schema ingestion."""
         self.snowflake_config = snowflake_config
         self.embedding_model = embedding_model
-        self.api_key = api_key
+        resolved_api_key = api_key or get_env_var("OPENAI_API_KEY") or get_env_var("OPEN_ROUTER") or ""
+        self.api_key = resolved_api_key
         self.chroma_db_path = chroma_db_path
         self.collection_name = collection_name
         
-        # Initialize embeddings
-        self.embeddings = OpenAIEmbeddings(
-            model=embedding_model,
-            api_key=api_key
-        )
+        os.makedirs(chroma_db_path, exist_ok=True)
         
+        # Initialize embeddings
+        if resolved_api_key:
+            try:
+                self.embeddings = OpenAIEmbeddings(
+                    model=embedding_model,
+                    api_key=resolved_api_key
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenAIEmbeddings: {e}")
+                self.embeddings = None
+        else:
+            self.embeddings = None
+
         # Initialize ChromaDB
         self.chroma_client = chromadb.PersistentClient(
             path=chroma_db_path,
@@ -64,24 +74,7 @@ class SchemaIngestion:
         )
 
     def fetch_snowflake_schema(self) -> Dict[str, Any]:
-        """Fetch table and column information from Snowflake.
-        
-        Returns:
-            Dictionary containing schema information:
-            {
-                "tables": [
-                    {
-                        "name": "TABLE_NAME",
-                        "description": "...",
-                        "columns": [
-                            {"name": "COL_NAME", "type": "VARCHAR", "description": "..."},
-                            ...
-                        ]
-                    },
-                    ...
-                ]
-            }
-        """
+        """Fetch table and column information from Snowflake."""
         try:
             db = SnowflakeDB(self.snowflake_config)
             db.connect()
@@ -147,11 +140,7 @@ class SchemaIngestion:
             raise
 
     def fetch_sqlite_schema(self) -> Dict[str, Any]:
-        """Fetch table and column information from local SQLite database.
-        
-        Returns:
-            Dictionary containing schema information
-        """
+        """Fetch table and column information from local SQLite database."""
         try:
             from database import SQLiteDB
             db = SQLiteDB()
@@ -204,11 +193,7 @@ class SchemaIngestion:
             raise
 
     def create_schema_embeddings(self, schema_info: Dict[str, Any]) -> None:
-        """Create embeddings for tables and columns and store in ChromaDB.
-        
-        Args:
-            schema_info: Schema information from fetch_snowflake_schema()
-        """
+        """Create embeddings for tables and columns and store in ChromaDB."""
         try:
             documents = []
             metadatas = []
@@ -260,11 +245,28 @@ class SchemaIngestion:
             
             # Add documents to ChromaDB
             if documents:
-                self.collection.add(
-                    documents=documents,
-                    metadatas=metadatas,
-                    ids=ids
-                )
+                if self.embeddings:
+                    try:
+                        embeddings_list = self.embeddings.embed_documents(documents)
+                        self.collection.add(
+                            documents=documents,
+                            embeddings=embeddings_list,
+                            metadatas=metadatas,
+                            ids=ids
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embeddings via OpenAI, adding documents directly: {e}")
+                        self.collection.add(
+                            documents=documents,
+                            metadatas=metadatas,
+                            ids=ids
+                        )
+                else:
+                    self.collection.add(
+                        documents=documents,
+                        metadatas=metadatas,
+                        ids=ids
+                    )
                 
                 logger.info(f"Created {len(documents)} embeddings in ChromaDB")
             
@@ -284,8 +286,11 @@ class SchemaIngestion:
                 schema_info = self.fetch_snowflake_schema()
             
             # Clear existing collection
-            self.collection.delete(where={})
-            logger.info("Cleared existing schema embeddings")
+            try:
+                self.collection.delete(where={})
+                logger.info("Cleared existing schema embeddings")
+            except Exception as e:
+                logger.warning(f"Could not clear existing collection: {e}")
             
             # Create and store embeddings
             self.create_schema_embeddings(schema_info)
@@ -297,11 +302,7 @@ class SchemaIngestion:
             raise
 
     def get_collection_stats(self) -> Dict[str, Any]:
-        """Get statistics about the ChromaDB collection.
-        
-        Returns:
-            Dictionary with collection statistics
-        """
+        """Get statistics about the ChromaDB collection."""
         try:
             count = self.collection.count()
             return {
@@ -317,14 +318,7 @@ class SchemaIngestion:
 
 # Standalone functions for easy use
 def ingest_schema_from_env(chroma_db_path: str = "./chroma_db") -> SchemaIngestion:
-    """Create SchemaIngestion instance from environment variables.
-    
-    Args:
-        chroma_db_path: Path to store ChromaDB
-        
-    Returns:
-        SchemaIngestion instance
-    """
+    """Create SchemaIngestion instance from environment variables."""
     from config import SnowflakeConfig, AppConfig
     
     try:

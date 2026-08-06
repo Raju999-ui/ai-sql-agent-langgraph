@@ -5,7 +5,7 @@ LangGraph-based agent for RAG-powered SQL generation and execution with conversa
 """
 import logging
 from typing import TypedDict, Literal, Optional
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, START, END
 from sql_generator import SQLGenerator, SQLValidator
 from safe_sql_executor import SafeSQLExecutor
 from schema_retriever import SchemaRetriever
@@ -172,7 +172,7 @@ def build_langgraph_agent():
     graph.add_node("handle_error", node_handle_error)
     
     # Set entry point to schema retrieval (RAG step)
-    graph.set_entry_point("retrieve_schema")
+    graph.add_edge(START, "retrieve_schema")
     
     # Add edges in RAG-powered workflow
     graph.add_edge("retrieve_schema", "generate_sql")  # Always go from retrieval to generation
@@ -207,4 +207,3 @@ def run_agent(user_input: str, db_type: str = "snowflake") -> dict:
     }
     final_state = agent.invoke(initial_state)
     return final_state
-

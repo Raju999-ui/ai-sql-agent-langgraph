@@ -20,14 +20,14 @@ class SQLGenerator:
         self.config = config
         self.llm = ChatOpenAI(
             model=config.model,
-            api_key=config.api_key,
+            api_key=config.api_key if config.api_key else "dummy-key-for-initialization",
             base_url=config.base_url,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
         
         self.system_prompt = """
-You are an advanced Snowflake SQL generation agent with:
+You are an advanced SQL generation agent with:
 - Conversation memory for multi-turn queries
 - Self-correction ability for handling errors
 - RAG-based schema awareness for dynamic schema retrieval
@@ -42,7 +42,7 @@ Your responsibilities:
    - "top 5" → use ORDER BY + LIMIT 5
 3. Preserve previous filters unless user explicitly changes topic
 4. Self-correct: analyze errors and regenerate corrected SQL
-5. Use the retrieved schema below to understand table and column names exactly
+5. Use case-insensitive matching for string columns (e.g. UPPER(type) = 'MOVIE' or type LIKE '%Movie%')
 6. Always validate column names match the schema
 
 STRICT RULES:
@@ -57,8 +57,8 @@ STRICT RULES:
 
 SQL GENERATION EXAMPLES:
 - SELECT title, director FROM table WHERE country LIKE '%USA%'
-- SELECT title, release_year FROM table WHERE type = 'Movie' AND release_year >= 2020
-- SELECT COUNT(*) FROM table WHERE category LIKE '%Action%'
+- SELECT title, release_year FROM table WHERE UPPER(type) LIKE '%MOVIE%' AND release_year >= 2020
+- SELECT COUNT(*) FROM table WHERE listed_in LIKE '%Action%'
 - SELECT title, rating FROM table ORDER BY release_year DESC LIMIT 5
 """
         
@@ -66,11 +66,9 @@ SQL GENERATION EXAMPLES:
 HARDCODED SCHEMA (fallback if RAG unavailable):
 Table: NETFLIX_MOVIES
 
-Table: NETFLIX_MOVIES
-
 Columns:
 - show_id (STRING): Unique identifier
-- type (STRING): 'Movie' or 'TV Show'
+- type (STRING): 'MOVIE' or 'SHOW' (Note: use UPPER(type) = 'MOVIE' or type LIKE '%MOVIE%' for matching)
 - title (STRING): Title of the show/movie
 - director (STRING): Director name(s)
 - cast (STRING): Cast members
@@ -91,15 +89,15 @@ RESPONSIBILITIES:
    - "those movies" → reference previous result set
    - "count them" → use COUNT(*)
    - "top 5" → use ORDER BY + LIMIT 5
-   - "only TV shows" → filter type = 'TV Show'
+   - "only TV shows" → filter UPPER(type) LIKE '%SHOW%'
    Intelligently modify the PREVIOUS SQL query instead of starting from scratch.
 3. Preserve previous filters unless user changes topic.
 4. If user resets topic completely, ignore old context.
 5. Handle self-correction: analyze errors and regenerate corrected SQL.
 6. For counts: SELECT COUNT(*) FROM NETFLIX_MOVIES WHERE ...
 7. For top/best: add ORDER BY column DESC LIMIT n
-8. For text filters: use LIKE '%value%' for flexibility.
-9. Always use valid Snowflake SQL syntax with correct comma placement.
+8. For text filters: use LIKE '%value%' or UPPER(col) = 'VAL' for flexibility.
+9. Always use valid SQL syntax with correct comma placement.
 
 STRICT RULES:
 
@@ -116,7 +114,7 @@ STRICT RULES:
 EXAMPLES:
 
 SELECT title, director FROM NETFLIX_MOVIES WHERE country LIKE '%USA%'
-SELECT title, release_year FROM NETFLIX_MOVIES WHERE type = 'Movie' AND release_year >= 2020
+SELECT title, release_year FROM NETFLIX_MOVIES WHERE UPPER(type) LIKE '%MOVIE%' AND release_year >= 2020
 SELECT COUNT(*) FROM NETFLIX_MOVIES WHERE listed_in LIKE '%Action%'
 SELECT title, rating FROM NETFLIX_MOVIES WHERE director LIKE '%Nolan%' ORDER BY release_year DESC LIMIT 5
 """
@@ -131,21 +129,11 @@ SELECT title, rating FROM NETFLIX_MOVIES WHERE director LIKE '%Nolan%' ORDER BY 
         schema_context: Optional[str] = None,
         db_type: str = "snowflake"
     ) -> str:
-        """Generate SQL query from natural language question with conversation memory and RAG.
-        
-        Args:
-            question: Natural language question about the data
-            previous_error: Error from previous query execution (for self-correction)
-            schema_context: Retrieved schema context from RAG system
-            db_type: The database type ("snowflake" or "sqlite")
-            
-        Returns:
-            Generated SQL query
-            
-        Raises:
-            Exception: If generation fails
-        """
+        """Generate SQL query from natural language question with conversation memory and RAG."""
         try:
+            if not self.config.api_key:
+                raise ValueError("API key for LLM is not configured. Please set OPENAI_API_KEY, OPEN_ROUTER, or GROQ_API_KEY in Streamlit Secrets.")
+
             # Check if question is too vague
             vague_keywords = ["show", "list", "get", "all", "everything", "movies", "shows", "tv"]
             question_lower = question.lower().strip()
@@ -242,11 +230,7 @@ Generate the SQL query now:"""
             raise
     
     def _build_context_string(self) -> str:
-        """Build context string from conversation history.
-        
-        Returns:
-            Formatted conversation context
-        """
+        """Build context string from conversation history."""
         if not self.conversation_history:
             return "Conversation History: None (starting fresh)"
         
@@ -258,14 +242,7 @@ Generate the SQL query now:"""
         return "\n".join(context_lines)
     
     def _is_context_dependent_query(self, question_lower: str) -> bool:
-        """Detect if query is context-dependent and should modify previous.
-        
-        Args:
-            question_lower: Lowercased question
-            
-        Returns:
-            True if query appears context-dependent
-        """
+        """Detect if query is context-dependent and should modify previous."""
         context_keywords = [
             "only from", "same", "those", "them", "count them",
             "top 5", "top 10", "best", "more", "less",
@@ -275,12 +252,7 @@ Generate the SQL query now:"""
         return any(keyword in question_lower for keyword in context_keywords)
     
     def _track_query(self, question: str, sql: str) -> None:
-        """Track question and SQL in conversation history.
-        
-        Args:
-            question: User's question
-            sql: Generated SQL
-        """
+        """Track question and SQL in conversation history."""
         self.conversation_history.append({
             "question": question,
             "sql": sql
@@ -288,7 +260,7 @@ Generate the SQL query now:"""
         logger.debug(f"Tracked query in history. Total: {len(self.conversation_history)}")
     
     def reset_history(self) -> None:
-        """Reset conversation history (when topic changes completely)."""
+        """Reset conversation history."""
         self.conversation_history = []
         logger.debug("Conversation history reset")
 
@@ -298,17 +270,7 @@ class SQLValidator:
 
     @staticmethod
     def validate(query: str) -> bool:
-        """Validate SQL query syntax.
-        
-        Args:
-            query: SQL query to validate
-            
-        Returns:
-            True if query is valid
-            
-        Raises:
-            ValueError: If query is invalid
-        """
+        """Validate SQL query syntax."""
         query = query.strip()
         
         # Remove trailing semicolon

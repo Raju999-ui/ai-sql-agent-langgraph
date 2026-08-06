@@ -67,8 +67,7 @@ class MockCursor:
     
     def execute(self, query):
         """Mock execute - return sample data."""
-        # Return sample data for any query
-        self.results = list(self.mock_data['shows'])  # Convert to list to ensure it's mutable
+        self.results = list(self.mock_data['shows'])
         self.description = [('title',)]
         return self
     
@@ -101,6 +100,11 @@ class SnowflakeDB:
 
     def connect(self) -> None:
         """Establish connection to Snowflake."""
+        if not SNOWFLAKE_AVAILABLE or not self.config.user or not self.config.account:
+            logger.warning("Snowflake credentials not fully configured or driver unavailable; falling back to mock mode")
+            self.connection = MockSnowflakeConnection()
+            return
+
         try:
             logger.info(f"Connecting to Snowflake account: {self.config.account}")
             self.connection = snowflake.connector.connect(
@@ -158,11 +162,7 @@ class SnowflakeDB:
             raise
 
     def get_schema(self) -> str:
-        """Get table schema information.
-        
-        Returns:
-            Schema information as string
-        """
+        """Get table schema information."""
         try:
             query = f"""
             SELECT COLUMN_NAME, DATA_TYPE 
@@ -242,13 +242,8 @@ class SQLiteDB:
             raise
 
     def get_schema(self) -> str:
-        """Get all table and column information.
-        
-        Returns:
-            Schema information as string
-        """
+        """Get all table and column information."""
         try:
-            # Query tables and views
             cursor = self.connection.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view');")
             tables = cursor.fetchall()
@@ -258,7 +253,6 @@ class SQLiteDB:
                 table_name = table_row[0]
                 schema_parts.append(f"Table: {table_name}")
                 
-                # Query columns
                 cursor.execute(f"PRAGMA table_info({table_name});")
                 columns = cursor.fetchall()
                 for col in columns:
