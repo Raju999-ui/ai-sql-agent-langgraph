@@ -64,7 +64,7 @@ class LLMConfig:
     model: str = "openrouter/auto"
     base_url: str = "https://openrouter.ai/api/v1"
     temperature: float = 0.0
-    max_tokens: Optional[int] = None
+    max_tokens: Optional[int] = 2048
 
     @staticmethod
     def from_env() -> "LLMConfig":
@@ -91,7 +91,7 @@ class LLMConfig:
                 model = "openrouter/auto"
 
         max_tokens_val = get_env_var("LLM_MAX_TOKENS")
-        max_tokens = int(max_tokens_val) if max_tokens_val else None
+        max_tokens = int(max_tokens_val) if max_tokens_val else 2048
 
         temp_val = get_env_var("LLM_TEMPERATURE", "0")
         try:

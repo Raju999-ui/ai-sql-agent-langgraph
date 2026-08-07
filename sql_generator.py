@@ -23,7 +23,7 @@ class SQLGenerator:
             api_key=config.api_key if config.api_key else "dummy-key-for-initialization",
             base_url=config.base_url,
             temperature=config.temperature,
-            max_tokens=config.max_tokens,
+            max_tokens=config.max_tokens if config.max_tokens is not None else 2048,
         )
         
         self.system_prompt = """
