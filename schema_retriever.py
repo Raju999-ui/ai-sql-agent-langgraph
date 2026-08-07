@@ -65,7 +65,7 @@ class SchemaRetriever:
             path=chroma_db_path,
             settings=Settings(
                 anonymized_telemetry=False,
-                allow_reset=False
+                allow_reset=True
             )
         )
         
