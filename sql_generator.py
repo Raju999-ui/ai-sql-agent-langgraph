@@ -44,6 +44,7 @@ Your responsibilities:
 4. Self-correct: analyze errors and regenerate corrected SQL
 5. Use case-insensitive matching for string columns (e.g. UPPER(type) = 'MOVIE' or type LIKE '%Movie%')
 6. Always validate column names match the schema
+7. The CAST column must always be wrapped in double quotes as "CAST" since it is a reserved SQL keyword. Never write it unquoted.
 
 STRICT RULES:
 - Generate ONLY raw SQL (nothing else)
@@ -54,10 +55,11 @@ STRICT RULES:
 - Output ONLY the final SQL query
 - No trailing semicolons
 - Ensure proper comma placement in SELECT and WHERE clauses
+- The CAST column must always be wrapped in double quotes as "CAST" since it is a reserved SQL keyword. Never write it unquoted.
 
 SQL GENERATION EXAMPLES:
 - SELECT title, director FROM table WHERE country LIKE '%USA%'
-- SELECT title, release_year FROM table WHERE UPPER(type) LIKE '%MOVIE%' AND release_year >= 2020
+- SELECT title, "CAST" FROM NETFLIX_MOVIES WHERE UPPER(type) LIKE '%MOVIE%' AND release_year >= 2020
 - SELECT COUNT(*) FROM table WHERE listed_in LIKE '%Action%'
 - SELECT title, rating FROM table ORDER BY release_year DESC LIMIT 5
 """
@@ -71,7 +73,7 @@ Columns:
 - type (STRING): 'MOVIE' or 'SHOW' (Note: use UPPER(type) = 'MOVIE' or type LIKE '%MOVIE%' for matching)
 - title (STRING): Title of the show/movie
 - director (STRING): Director name(s)
-- cast (STRING): Cast members
+- cast (STRING): Cast members (Note: always wrap in double quotes as "CAST" since it is a reserved SQL keyword)
 - country (STRING): Country/countries
 - date_added (STRING): Date added to Netflix
 - release_year (INTEGER): Release year
@@ -98,6 +100,7 @@ RESPONSIBILITIES:
 7. For top/best: add ORDER BY column DESC LIMIT n
 8. For text filters: use LIKE '%value%' or UPPER(col) = 'VAL' for flexibility.
 9. Always use valid SQL syntax with correct comma placement.
+10. The CAST column must always be wrapped in double quotes as "CAST" since it is a reserved SQL keyword. Never write it unquoted.
 
 STRICT RULES:
 
@@ -107,14 +110,15 @@ STRICT RULES:
 - Do NOT use SELECT *.
 - Do NOT generate INSERT, UPDATE, DELETE, DROP, ALTER, or TRUNCATE.
 - Output ONLY the final corrected SQL query.
-- Ensure column names match exactly: show_id, type, title, director, cast, country, date_added, release_year, rating, duration, listed_in, description.
+- Ensure column names match exactly: show_id, type, title, director, "CAST", country, date_added, release_year, rating, duration, listed_in, description.
+- The CAST column must always be wrapped in double quotes as "CAST" since it is a reserved SQL keyword. Never write it unquoted.
 - Ensure proper comma placement in SELECT and WHERE clauses.
 - No trailing commas or syntax errors.
 
 EXAMPLES:
 
 SELECT title, director FROM NETFLIX_MOVIES WHERE country LIKE '%USA%'
-SELECT title, release_year FROM NETFLIX_MOVIES WHERE UPPER(type) LIKE '%MOVIE%' AND release_year >= 2020
+SELECT title, "CAST" FROM NETFLIX_MOVIES WHERE UPPER(type) LIKE '%MOVIE%' AND release_year >= 2020
 SELECT COUNT(*) FROM NETFLIX_MOVIES WHERE listed_in LIKE '%Action%'
 SELECT title, rating FROM NETFLIX_MOVIES WHERE director LIKE '%Nolan%' ORDER BY release_year DESC LIMIT 5
 """
