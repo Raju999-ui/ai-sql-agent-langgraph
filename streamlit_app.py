@@ -11,6 +11,7 @@ except ImportError:
 import streamlit as st
 import logging
 import json
+import os
 from datetime import datetime
 from config import AppConfig
 from logger_config import setup_logging
@@ -29,6 +30,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Auto-initialize RAG schema on startup if ChromaDB folder is empty or missing
+@st.cache_resource
+def auto_init_rag_schema():
+    if not os.path.exists("./chroma_db") or not os.listdir("./chroma_db"):
+        with st.spinner("Initializing RAG schema..."):
+            ingestion = ingest_schema_from_env()
+            ingestion.ingest_schema(db_type="snowflake")
+
+auto_init_rag_schema()
+
 
 # Initialize session state (no agent object needed for stateless run_agent)
 if "chat_history" not in st.session_state:
@@ -39,6 +50,10 @@ if "chat_history" not in st.session_state:
     st.session_state.schema_context = ""
     st.session_state.rag_enabled = True
     st.session_state.db_source = "snowflake"
+    st.session_state.query_count = 0
+
+if "query_count" not in st.session_state:
+    st.session_state.query_count = 0
 
 # Sidebar
 with st.sidebar:
@@ -168,10 +183,12 @@ with st.sidebar:
             st.session_state.conversation_context = ""
             st.session_state.last_query = None
             st.session_state.last_results = None
+            st.session_state.query_count = 0
             st.rerun()
     
     st.markdown("---")
     st.subheader("📊 Conversation Stats")
+    st.metric("Queries Used", f"{st.session_state.get('query_count', 0)} / 20")
     st.metric("Messages", len(st.session_state.chat_history))
     if st.session_state.chat_history:
         user_msgs = sum(1 for m in st.session_state.chat_history if m["role"] == "user")
@@ -255,15 +272,27 @@ if user_input:
     with st.chat_message("user"):
         st.markdown(user_input)
     
-    # Process the query
-    with st.spinner("🔄 Processing your question... (Retrieving schema → Generating SQL → Executing)"):
+    # Check query limit per session
+    if st.session_state.get("query_count", 0) >= 20:
+        limit_msg = "Demo limit reached for this session — refresh to continue"
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": limit_msg,
+            "timestamp": datetime.now().isoformat(),
+        })
+        with st.chat_message("assistant"):
+            st.warning(limit_msg)
+    else:
+        st.session_state.query_count = st.session_state.get("query_count", 0) + 1
+        # Process the query
         try:
-            # Use RAG-powered LangGraph agent
-            agent_result = run_agent(user_input, db_type=st.session_state.db_source)
-            sql_query = agent_result.get("sql")
-            results = agent_result.get("result")
-            error = agent_result.get("error")
-            schema_context = agent_result.get("schema_context", "")
+            with st.spinner("🔄 Processing your question... (Retrieving schema → Generating SQL → Executing)"):
+                # Use RAG-powered LangGraph agent
+                agent_result = run_agent(user_input, db_type=st.session_state.db_source)
+                sql_query = agent_result.get("sql")
+                results = agent_result.get("result")
+                error = agent_result.get("error")
+                schema_context = agent_result.get("schema_context", "")
 
             # Store schema context for display
             st.session_state.schema_context = schema_context
