@@ -131,7 +131,8 @@ SELECT title, rating FROM NETFLIX_MOVIES WHERE director LIKE '%Nolan%' ORDER BY 
         question: str,
         previous_error: Optional[str] = None,
         schema_context: Optional[str] = None,
-        db_type: str = "snowflake"
+        db_type: str = "snowflake",
+        table_name: Optional[str] = None
     ) -> str:
         """Generate SQL query from natural language question with conversation memory and RAG."""
         try:
@@ -171,6 +172,20 @@ What specific Netflix content are you looking for?""")
             # Build context from conversation history
             context_str = self._build_context_string()
             
+            # When db_type is sqlite, dynamically fetch SQLite schema if table_name is set or schema_context is missing/fallback
+            if db_type == "sqlite":
+                if not schema_context or schema_context == self.schema_description or (table_name and table_name.lower() not in schema_context.lower()):
+                    try:
+                        from database import SQLiteDB
+                        db = SQLiteDB()
+                        db.connect()
+                        sqlite_schema = db.get_schema()
+                        db.disconnect()
+                        if sqlite_schema:
+                            schema_context = sqlite_schema
+                    except Exception as e:
+                        logger.error(f"Failed to fetch dynamic SQLite schema: {e}")
+
             # Use RAG-retrieved schema or fall back to hardcoded
             if not schema_context:
                 schema_context = self.schema_description
@@ -196,6 +211,11 @@ What specific Netflix content are you looking for?""")
                     "Snowflake",
                     "SQLite"
                 ) + "\nEnsure you generate standard SQLite compatible SQL query. Do not use Snowflake-specific syntax or functions."
+                
+                if table_name:
+                    system_prompt += f"\n\nCRITICAL TABLE INSTRUCTION: The active table name is '{table_name}'. You MUST generate SQL queries specifically targeting table '{table_name}' and use its actual column names from the RETRIEVED SCHEMA. Do NOT query 'NETFLIX_MOVIES'."
+                else:
+                    system_prompt += "\n\nCRITICAL TABLE INSTRUCTION: You MUST generate SQL queries targeting the actual table name(s) and column names specified in the RETRIEVED SCHEMA. Do NOT default to 'NETFLIX_MOVIES' if the schema specifies a different table."
 
             prompt = f"""{system_prompt}
 

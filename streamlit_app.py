@@ -51,9 +51,13 @@ if "chat_history" not in st.session_state:
     st.session_state.rag_enabled = True
     st.session_state.db_source = "snowflake"
     st.session_state.query_count = 0
+    st.session_state.active_sqlite_table = None
 
 if "query_count" not in st.session_state:
     st.session_state.query_count = 0
+
+if "active_sqlite_table" not in st.session_state:
+    st.session_state.active_sqlite_table = None
 
 # Sidebar
 with st.sidebar:
@@ -88,6 +92,7 @@ with st.sidebar:
             df.to_sql(table_name, conn, if_exists="replace", index=False)
             conn.close()
             
+            st.session_state.active_sqlite_table = table_name
             st.success(f"✓ Saved to SQLite table: `{table_name}` ({len(df)} rows)")
             
             # Switch source and refresh if necessary
@@ -288,7 +293,11 @@ if user_input:
         try:
             with st.spinner("🔄 Processing your question... (Retrieving schema → Generating SQL → Executing)"):
                 # Use RAG-powered LangGraph agent
-                agent_result = run_agent(user_input, db_type=st.session_state.db_source)
+                agent_result = run_agent(
+                    user_input, 
+                    db_type=st.session_state.db_source,
+                    table_name=st.session_state.get("active_sqlite_table")
+                )
                 sql_query = agent_result.get("sql")
                 results = agent_result.get("result")
                 error = agent_result.get("error")

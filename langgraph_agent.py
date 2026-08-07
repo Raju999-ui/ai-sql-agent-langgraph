@@ -52,6 +52,7 @@ class AgentState(TypedDict):
     error: str
     previous_error: str  # For self-correction
     db_type: str  # "snowflake" or "sqlite"
+    table_name: Optional[str]  # Active SQLite table name if uploaded
 
 
 def node_retrieve_schema(state: AgentState) -> AgentState:
@@ -103,7 +104,8 @@ def node_generate_sql(state: AgentState) -> AgentState:
             state["user_input"],
             previous_error=previous_error if previous_error else None,
             schema_context=schema_context if schema_context else None,
-            db_type=db_type
+            db_type=db_type,
+            table_name=state.get("table_name")
         )
         
         logger.info(f"Generated SQL: {sql}")
@@ -193,7 +195,7 @@ def build_langgraph_agent():
     return graph.compile()
 
 
-def run_agent(user_input: str, db_type: str = "snowflake") -> dict:
+def run_agent(user_input: str, db_type: str = "snowflake", table_name: Optional[str] = None) -> dict:
     """Run the RAG-powered agent with a user input and return results."""
     agent = build_langgraph_agent()
     initial_state = {
@@ -203,7 +205,8 @@ def run_agent(user_input: str, db_type: str = "snowflake") -> dict:
         "result": None,
         "error": "",
         "previous_error": "",
-        "db_type": db_type
+        "db_type": db_type,
+        "table_name": table_name
     }
     final_state = agent.invoke(initial_state)
     return final_state
