@@ -84,7 +84,7 @@ class SchemaIngestion:
             
             # Fetch tables from information schema
             cursor.execute(f"""
-                SELECT TABLE_NAME, TABLE_COMMENT
+                SELECT TABLE_NAME, COMMENT
                 FROM INFORMATION_SCHEMA.TABLES
                 WHERE TABLE_SCHEMA = '{self.snowflake_config.schema}'
                     AND TABLE_CATALOG = '{self.snowflake_config.database}'
