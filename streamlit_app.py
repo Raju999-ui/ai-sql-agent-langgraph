@@ -66,12 +66,19 @@ with st.sidebar:
     
     # Database Settings
     st.subheader("⚙️ Database Settings")
-    st.session_state.db_source = st.selectbox(
+    selected_source = st.selectbox(
         "Active Database Source",
         options=["snowflake", "sqlite"],
         format_func=lambda x: "Snowflake Cloud" if x == "snowflake" else "Local SQLite (CSV Uploads)",
         index=0 if st.session_state.db_source == "snowflake" else 1
     )
+    
+    # Reset active SQLite table name when switching database sources or when snowflake is selected
+    if selected_source != st.session_state.db_source:
+        st.session_state.db_source = selected_source
+        st.session_state.active_sqlite_table = None
+    elif st.session_state.db_source == "snowflake":
+        st.session_state.active_sqlite_table = None
     
     st.markdown("---")
     
@@ -85,32 +92,38 @@ with st.sidebar:
             raw_name = uploaded_file.name.rsplit(".", 1)[0]
             table_name = re.sub(r'[^a-zA-Z0-9_]', '_', raw_name).lower()
             
-            df = pd.read_csv(uploaded_file)
-            
-            import sqlite3
-            conn = sqlite3.connect("local_data.db")
-            df.to_sql(table_name, conn, if_exists="replace", index=False)
-            conn.close()
-            
-            st.session_state.active_sqlite_table = table_name
-            st.success(f"✓ Saved to SQLite table: `{table_name}` ({len(df)} rows)")
-            
-            # Switch source and refresh if necessary
-            if st.session_state.db_source != "sqlite":
-                st.session_state.db_source = "sqlite"
-                st.rerun()
+            # Process only when a new CSV file is uploaded
+            file_identifier = f"{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.get("last_uploaded_file") != file_identifier:
+                df = pd.read_csv(uploaded_file)
                 
-            # Trigger schema ingestion automatically
-            with st.spinner("🔄 Ingesting SQLite schema for RAG..."):
-                try:
-                    ingestion = ingest_schema_from_env()
-                    ingestion.ingest_schema(db_type="sqlite")
-                    st.toast("✓ RAG schema updated for SQLite!")
-                except Exception as e:
-                    st.warning(f"RAG embedding failed (embeddings require OPENAI_API_KEY): {e}. Falling back to direct database schema querying.")
+                import sqlite3
+                conn = sqlite3.connect("local_data.db")
+                df.to_sql(table_name, conn, if_exists="replace", index=False)
+                conn.close()
+                
+                st.session_state.active_sqlite_table = table_name
+                st.session_state.last_uploaded_file = file_identifier
+                st.success(f"✓ Saved to SQLite table: `{table_name}` ({len(df)} rows)")
+                
+                # Switch source and refresh if necessary
+                if st.session_state.db_source != "sqlite":
+                    st.session_state.db_source = "sqlite"
+                    st.rerun()
+                    
+                # Trigger schema ingestion automatically
+                with st.spinner("🔄 Ingesting SQLite schema for RAG..."):
+                    try:
+                        ingestion = ingest_schema_from_env()
+                        ingestion.ingest_schema(db_type="sqlite")
+                        st.toast("✓ RAG schema updated for SQLite!")
+                    except Exception as e:
+                        st.warning(f"RAG embedding failed (embeddings require OPENAI_API_KEY): {e}. Falling back to direct database schema querying.")
             
         except Exception as e:
             st.error(f"❌ Failed to process CSV: {e}")
+    else:
+        st.session_state.last_uploaded_file = None
             
     st.markdown("---")
     
@@ -296,7 +309,7 @@ if user_input:
                 agent_result = run_agent(
                     user_input, 
                     db_type=st.session_state.db_source,
-                    table_name=st.session_state.get("active_sqlite_table")
+                    table_name=st.session_state.get("active_sqlite_table") if st.session_state.db_source == "sqlite" else None
                 )
                 sql_query = agent_result.get("sql")
                 results = agent_result.get("result")
